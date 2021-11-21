@@ -1,0 +1,370 @@
+---
+title: "DSC 520 Final Project Step 2"
+author: "Taylor Imhof"
+date: "11/11/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include=FALSE}
+# libraries
+library(DataExplorer)
+library(dplyr)
+library(Hmisc)
+library(ggplot2)
+library(purrr)
+library(data.table)
+```
+
+## Data Import and Cleaning Efforts
+Fortunately, all of my data sets came in .csv format, so reading in the data to
+data frames was straightforward using the built-in read.csv() function. 
+
+```{r, echo=T, results='hide'}
+# read in data to data frames
+happiness_2018_df <- read.csv('data/happiness_2018.csv', stringsAsFactors = FALSE)
+lifestyle_df <- read.csv('data/lifestyle.csv', stringsAsFactors = FALSE)
+human_df <- read.csv('data/human_development.csv', stringsAsFactors = FALSE)
+```
+
+
+To get a basic understanding of how the data is designed, I ran str() on each of
+them to see the different data types.
+```{r, echo=T, results='hide'}
+# check structure of each data frame
+str(happiness_2018_df)
+str(lifestyle_df)
+str(human_df)
+```
+
+I did not really like how the original column names were written, so I made some
+slight adjustments to make it easier for me to understand and code later on.
+
+```{r, include=T, results='hide'}
+# rename columns for easier coding
+old1 <- c('Overall.rank', 'Country.or.region', 'GDP.per.capita', 'Social.support',
+          'Healthy.life.expectancy', 'Freedom.to.make.life.choices', 'Perceptions.of.corruption')
+new1 <- c('Rank', 'Country', 'GDP', 'socialSupport', 'lifeExpectancy', 'choiceFreedom',
+          'Corruption')
+old2 <- c('HDI.Rank', 'Human.Development.Index..HDI.', 'Life.Expectancy.at.Birth',
+         'Expected.Years.of.Education' ,'Mean.Years.of.Education', 
+         'Gross.National.Income..GNI..per.Capita','GNI.per.Capita.Rank.Minus.HDI.Rank')
+new2 <- c('HDIrank', 'HDI', 'lifeExpectancy', 'expectedEducationYears', 
+          'meanEducationYears', 'GNI', 'GNIminusHDIrank')
+setnames(happiness_2018_df, old=old1, new=new1)
+setnames(human_df, old=old2, new=new2)
+```
+
+Right off the bat, I noticed that the `Corruption` column had chr values. To fix
+this, I first set the imputed all of the NA values with the mean of the 
+distribution for that column. Then, I converted the column's values to numeric 
+values using the as.numeric() function.
+
+```{r, echo=T, results='hide'}
+# convert perception.of.corruption from chr to num
+happiness_2018_df$Corruption[is.na(happiness_2018_df$Corruption)] <- mean(happiness_2018_df$Corruption, na.rm=TRUE)
+happiness_2018_df$Corruption <- as.numeric(as.character(happiness_2018_df$Corruption))
+str(happiness_2018_df)
+```
+
+In a similar vein, the `DAILY_STRESS` column in the lifestyle data frame was also
+interpreted as characters. I simply followed the same logic I used above to
+correct for this.
+
+```{r, echo=T, results='hide'}
+lifestyle_df$DAILY_STRESS[is.na(lifestyle_df$DAILY_STRESS)] <- mean(lifestyle_df$DAILY_STRESS, na.rm=TRUE)
+lifestyle_df$DAILY_STRESS <- as.numeric(as.character(lifestyle_df$DAILY_STRESS))
+str(lifestyle_df)
+```
+
+Next, in the lifestyle data frame, the column `GENDER` used character values to 
+denote gender, so I went ahead and converted these to binary values so that they
+could be better used during analysis. I created a new column `SEX` and converted 
+all Male values to 1 and all female values to 0.
+
+```{r, include=T, results='hide'}
+# convert GENDER column to binary values
+lifestyle_df$SEX[lifestyle_df$GENDER=='Male'] <- 1
+lifestyle_df$SEX[lifestyle_df$GENDER=='Female'] <- 0
+str(lifestyle_df)
+```
+
+Since the lifestyle data frame doesn't have any values that can be used to merge
+with the other data frames, I decided to use it to analyze which lifestyle factors
+can improve overall health (this data set used a calculated work-life-balance).
+The other two data frames both contained country names, so merging them together
+was straightforward. Using the merge() function, I was able to combine the two 
+together.
+
+```{r, include=TRUE, results='hide'}
+# merge happiness and HDI dfs together on country name
+combo_df <- happiness_2018_df %>% merge(human_df, by='Country', all.x = T)
+str(combo_df)
+```
+
+In this new data frame, the `GNI` column contained character values. I predicted
+this column would be a useful predictor, so I need to convert it to numeric values.
+Following a similar procedure I used earlier, I converted all the values using
+the as.numeric() function. A pesky issue that was giving me grief was the starting
+values all contained commas. To remedy this, I used gsub() to replace them.
+
+```{r, include=TRUE, results='hide'}
+# replace commas with white space
+combo_df$GNI <- as.numeric(gsub(",", "", combo_df$GNI))
+combo_df$GNI[is.na(combo_df$GNI)] <- mean(combo_df$GNI, na.rm=TRUE)
+combo_df$GNI <- as.numeric(combo_df$GNI)
+```
+
+The next thing I decided to do was make sure that my data did not contain any
+NA values. I found a pretty slick implementation of the map_df from the purrr
+package that runs through each column and sums up all the NA values. There were
+quite a few NA values for columns that were added during the merge. This was 
+expected, as there were likely country's not included in both. To remedy this,
+I opted to impute the means for these NA values. Lastly, I did the same operation
+to check for NA values on the lifestyle data frame. However, fortunately all of
+the values contained in this data set were "clean" and contained no NA values.
+
+```{r, include=TRUE, results='hide'}
+# check for NA values using map_df from purrr
+combo_df %>% map_df(~sum(is.na(.)))
+
+# impute mean for columns with NA values
+for(i in 1:ncol(combo_df)){
+  combo_df[, i][is.na(combo_df[,i])] <- mean(combo_df[,i], na.rm=TRUE)
+}
+
+# check again for NA values to ensure imputation was successful
+combo_df %>% map_df(~sum(is.na(.)))
+
+# check for NA values in lifestyle_df
+lifestyle_df %>% map_df(~sum(is.na(.)))
+
+# impute mean for columns with NA values
+for(i in 1:ncol(lifestyle_df)){
+  lifestyle_df[, i][is.na(lifestyle_df[,i])] <- mean(lifestyle_df[,i], na.rm=TRUE)
+}
+
+# convert lifestyle values from integer to numeric
+lifestyle_df[1:22] <- lapply(lifestyle_df[1:22], as.numeric)
+str(lifestyle_df)
+```
+
+The last thing I decided to do during the data cleaning stage was narrow down
+columns for each data frame. During the merge of the HDI and WHR data sets, two
+life expectancy columns were created. However, only one seems to use years as a
+metric, so I opted to keep this column. There are two rank scores as well, both
+of which I decided would not be useful for analysis so they were dropped. In the
+lifestyle data frame, I decided the timestamp info would not be useful. Also,
+since I created a new variable of binary values based on the `GENDER` column, it
+was dropped. The age column also contained some strange values, so I thought it
+would be easier to just leave it out of the final data frame.
+
+```{r, include=T, results='hide'}
+#
+dropCols1 <- c('Rank','lifeExpectancy.x','HDIrank', 'GNIminusHDIrank')
+combo_df <- combo_df[,!(names(combo_df) %in% dropCols1)]
+
+dropCols2 <- c('ï..Timestamp', 'AGE', 'GENDER')
+lifestyle_df <- lifestyle_df[,!(names(lifestyle_df) %in% dropCols2)]
+str(lifestyle_df)
+```
+
+
+## Final Two "Cleaned" Data Frames For Analysis
+After performing the munging operations outlined above, I was pretty happy with
+my two data sets. Below is the output of the str() function on both of them for
+review.
+```{r, echo=FALSE}
+str(combo_df)
+str(lifestyle_df)
+
+```
+
+
+## Plots and Data Transformations
+For my two final data frames, I decided that `Score` and `WORK_LIFE_BALANCE_SCORE`
+would be the best target variables. I ran a quick hist() on both of these features
+to ensure that they were both normally distributed. Both appeared to be normal
+distributions. In fact, the `WORK_LIFE_BALANCE_SCORE` looked like a textbook
+example of the normal curve.
+
+```{r, include=TRUE}
+par(mar=c(1,1,1,1))
+
+# check distribution of target variables for both data frames
+hist(combo_df$Score)
+hist(lifestyle_df$WORK_LIFE_BALANCE_SCORE)
+```
+
+Next, to find which features would make for good predictors, I ran a Pearson's
+correlation test on the numeric values of each data frame. Some of the features
+that stuck out for the combo_df were `GDP`, `HDI`, `socialSupport`, and
+`lifeExpectancy`. After looking at the distributions for each of these potential
+explanatory features, there were two negatively skewed distributions that could
+use transformation. These were the `socialSupport` and `lifeExpectancy` columns
+respectively. After creating a new variable contained the squared values,
+the distributions did appear to take on a more normal distribution.
+
+```{r, include=FALSE, warning=FALSE}
+par(mar=c(1,1,1,1))
+
+# run cor test to identify potential independent variables
+cor(combo_df[-1], method='pearson')
+```
+
+```{r, include=TRUE}
+# check distributions for normality
+ggplot(combo_df, aes(x=GDP)) + 
+  geom_histogram(aes(y=..density..), colour='black', fill='white') +
+  geom_density(alpha=.2, fill='#FF6666')
+
+ggplot(combo_df, aes(x=HDI)) + 
+  geom_histogram(aes(y=..density..), colour='black', fill='white') +
+  geom_density(alpha=.2, fill='#FF6666')
+
+ggplot(combo_df, aes(x=socialSupport)) + 
+  geom_histogram(aes(y=..density..), colour='black', fill='white') +
+  geom_density(alpha=.2, fill='#FF6666')
+
+ggplot(combo_df, aes(x=lifeExpectancy.y)) + 
+  geom_histogram(aes(y=..density..), colour='black', fill='white') +
+  geom_density(alpha=.2, fill='#FF6666')
+
+# square values of life expectancy for more normal distro
+combo_df$squareLifeExpectancy <- combo_df$lifeExpectancy.y ^2
+ggplot(combo_df, aes(x=squareLifeExpectancy)) + 
+  geom_histogram(aes(y=..density..), colour='black', fill='white') +
+  geom_density(alpha=.2, fill='#FF6666')
+
+# square values for social support for normal distro
+combo_df$squareSocialSupport <- combo_df$socialSupport ^2
+ggplot(combo_df, aes(x=squareSocialSupport)) + 
+  geom_histogram(aes(y=..density..), colour='black', fill='white') +
+  geom_density(alpha=.2, fill='#FF6666')
+```
+
+For the lifestyle data frame with the work-life balance score as the dependent
+variable, there did not appear to be any variables with strong correlations. The
+ones of note were `PLACES_VISITED`, `TIME_FOR_PASSION`, `SUPPORTING_OTHERS`, and
+`ACHIEVEMENT`.
+
+```{r, include=FALSE, warning=FALSE}
+par(mar=c(1,1,1,1))
+
+cor(lifestyle_df, method='pearson')
+```
+
+```{r, include=TRUE}
+ggplot(lifestyle_df, aes(x=PLACES_VISITED)) + 
+  geom_histogram(aes(y=..density..), colour='black', fill='white', bins=10) +
+  geom_density(alpha=.2, fill='#FF6666')
+
+ggplot(lifestyle_df, aes(x=ACHIEVEMENT)) + 
+  geom_histogram(aes(y=..density..), colour='black', fill='white', bins=10) +
+  geom_density(alpha=.2, fill='#FF6666')
+
+ggplot(lifestyle_df, aes(x=SUPPORTING_OTHERS)) + 
+  geom_histogram(aes(y=..density..), colour='black', fill='white', bins=10) +
+  geom_density(alpha=.2, fill='#FF6666')
+
+# take square root of time for passion to get more normal distro
+lifestyle_df$squarePassionTime <- lifestyle_df$TIME_FOR_PASSION ^(1/2)
+
+ggplot(lifestyle_df, aes(x=TIME_FOR_PASSION)) + 
+  geom_histogram(aes(y=..density..), colour='black', fill='white', bins=10) +
+  geom_density(alpha=.2, fill='#FF6666')
+ggplot(lifestyle_df, aes(x=squarePassionTime)) + 
+  geom_histogram(aes(y=..density..), colour='black', fill='white', bins=10) +
+  geom_density(alpha=.2, fill='#FF6666')
+
+```
+
+## Scatter Plots and Trend Analysis
+
+After selecting a few potential explanatory variables for each data set, I
+decided to use scatter plots to see if any linear relationships could be spotted.
+I used ggplot() functionality and added a regression line using the additional
+geom_smooth() function. As I had predicted, all four of my selected variables
+appeared to be positively related with the target variables.
+
+
+```{r, include=TRUE, warning=FALSE}
+par(mar=c(1,1,1,1))
+
+ggplot(combo_df, aes(x=squareLifeExpectancy, y=Score)) + 
+  geom_point() +
+  geom_smooth(method=lm)
+
+ggplot(combo_df, aes(x=GDP, y=Score)) + 
+  geom_point() +
+  geom_smooth(method=lm)
+
+ggplot(combo_df, aes(x=squareSocialSupport, y=Score)) + 
+  geom_point() +
+  geom_smooth(method=lm)
+
+ggplot(combo_df, aes(x=HDI, y=Score)) + 
+  geom_point() +
+  geom_smooth(method=lm)
+```
+
+```{r, echo=TRUE, warning=FALSE}
+par(mar=c(1,1,1,1))
+
+ggplot(lifestyle_df, aes(x=PLACES_VISITED, y=WORK_LIFE_BALANCE_SCORE)) + 
+  geom_point() +
+  geom_smooth(method=lm)
+ggplot(lifestyle_df, aes(x=ACHIEVEMENT, y=WORK_LIFE_BALANCE_SCORE)) + 
+  geom_point() +
+  geom_smooth(method=lm)
+ggplot(lifestyle_df, aes(x=SUPPORTING_OTHERS, y=WORK_LIFE_BALANCE_SCORE)) + 
+  geom_point() +
+  geom_smooth(method=lm)
+ggplot(lifestyle_df, aes(x=squarePassionTime, y=WORK_LIFE_BALANCE_SCORE)) + 
+  geom_point() +
+  geom_smooth(method=lm)
+```
+
+## Interpreting the Results
+After conducting initial EDA efforts, including data importation, cleaning, and
+transformation, there are a quite a few observations that can be made. First,
+it is important to note that a lot of these are relatively intuitive (e.g., people
+who live in richer countries tend to be 'happier'). However, it was very useful
+to see how to go about supporting these statements with hard numbers and statistics.
+
+One of the more interesting conclusions that can be made from the results is that
+countries with higher life expectancies tend to have a happier populace. I believe
+this is strongly supported with the additional trend that countries with a stronger
+sense of social support (i.e., social programs) also tend to have a happier
+population. Based on these findings, if I had the ear of my country's policymakers,
+I would ensure they understood these implications. Perhaps spending more on developing
+robust social programs will lead to healthier and happier people and a more 
+productive society overall.
+
+Moreover, summarizing the results from analyzing the lifestyle data set, there are
+a few prescriptions I would give if I were say, giving a speech about how to lead
+a happier life. The four predictors that I focused in on were again the number of
+places visited, sense of achievement, time spent on passions, and supporting others.
+The first makes intuitive sense; people who travel to more places are likely to be
+more financially secure than those who do not travel as often. However, I could
+compound this with the findings from the previous data set to encourage policymakers 
+further to develop social programs where people can travel abroad for service 
+projects.
+
+Another insight that I found most fascinating was the positive link between
+happiness and support for other people. Understanding that helping individuals in
+one's community is powerful. With the depression epidemic that is claiming so
+many lives to suicide, perhaps a new method of treating such ailments would be
+strong encouragement of participation in local service projects.
+
+
+```{r, include=FALSE, eval=FALSE}
+# useful for pop-out window of each data frame
+utils::View(happiness_2018_df)
+utils::View(lifestyle_df)
+utils::View(human_df)
+utils::View(combo_df)
+```
